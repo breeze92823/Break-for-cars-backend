@@ -30,25 +30,36 @@ export async function reportScores(): Promise<void> {
     if (scores.length >= PLATFORM_BOARD_BATCH - PLATFORM_BOARDS.length) break;
   }
   if (!scores.length) return;
+  await post(token, scores);
+}
 
+// One report call; the board declarations ride along every time, so Bloxity creates (upserts) the
+// boards even before the client's define() has run inside the portal. Never throws.
+async function post(token: string, scores: { board: string; userId: string; score: number }[]): Promise<boolean> {
   const api = (process.env.BLOXITY_API_URL || "https://api.bloxity.io").replace(/\/$/, "");
   try {
     const res = await fetch(`${api}/v1/leaderboards/hosted/${gameId()}/report`, {
       method: "POST",
       headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
       body: JSON.stringify({ boards: PLATFORM_BOARDS, scores }),
-      signal: AbortSignal.timeout(6000),
+      signal: AbortSignal.timeout(8000),
     });
-    const body: { dropped?: unknown } | null = await res.json().catch((): null => null);
-    if (body?.dropped) console.warn("[boards] dropped", body.dropped);
-    if (!res.ok) console.warn("[boards] report failed", res.status);
+    const body: { dropped?: Record<string, number> } | null = await res.json().catch((): null => null);
+    if (body?.dropped && Object.values(body.dropped).some((n) => n > 0)) console.warn("[boards] dropped", body.dropped);
+    if (!res.ok) console.warn("[boards] report failed", res.status, body);
+    return res.ok;
   } catch (err) {
     console.warn("[boards] report failed", err);
+    return false;
   }
 }
 
 export function installPlatformBoards(): void {
-  if (!process.env.BLOXITY_REPORT_TOKEN) return;
+  const token = process.env.BLOXITY_REPORT_TOKEN;
+  if (!token) return;
+  // Declare the boards at boot, so the trophy button and the plaza boards (getTop) find them
+  // instead of "Board not found" while no signed-in player has reported a score yet.
+  void post(token, []).then((ok) => ok && console.info("[boards] declared", PLATFORM_BOARDS.map((b) => b.id).join(", ")));
   setInterval(() => void reportScores(), PLATFORM_BOARD_EVERY_MS).unref();
 }
 

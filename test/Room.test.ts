@@ -72,7 +72,9 @@ describe("world room", () => {
     a.send("emote", { id: "000000000000000000000e01" });
     a.send("base", {
       lvl: 3,
-      unl: [9, 9, 42, "x"],
+      unl: [9, 9, 99, "x"],
+      fl: 7,
+      sk: "rainbow",
       inc: 12.5,
       bays: [
         { k: "b", t: "cyan", hp: 5000, max: 4000, v: "Golden" },
@@ -103,6 +105,18 @@ describe("world room", () => {
     assert.deepStrictEqual(base.bays[1], { k: "c", t: "gold", r: "Common", n: "Pebble", l: "blueCoupe", lv: 1, b: 3.2 });
     assert.strictEqual(base.bays[2], null, "a bad name drops the bay");
     assert.strictEqual(base.bays[4], null);
+    assert.strictEqual(base.fl, 4, "floors clamped to FLOORS_MAX");
+    assert.strictEqual(base.sk, "rainbow");
+
+    // Upper-floor bays (index 10+) survive; a bad floor count / skin id falls back to the defaults.
+    const upstairs = Array.from({ length: 30 }, (_, i) => (i === 25 ? { k: "b", t: "gold", hp: 10, max: 10 } : null));
+    a.send("base", { lvl: 3, fl: "two", sk: "<b>x</b>", bays: upstairs });
+    await sleep(50);
+    const b2 = JSON.parse(p.base);
+    assert.strictEqual(b2.bays.length, 30);
+    assert.deepStrictEqual(b2.bays[25], { k: "b", t: "gold", hp: 10, max: 10 });
+    assert.strictEqual(b2.fl, 0);
+    assert.strictEqual(b2.sk, "classic");
 
     a.send("base", { bays: "nope" });
     await sleep(50);

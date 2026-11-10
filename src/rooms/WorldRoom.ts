@@ -3,8 +3,10 @@ import { WorldState, PlayerState } from "./schema/WorldState.js";
 import { AD_COOLDOWN_MS, NAME_MAX, PFP_MAX_LEN, PLOT_COUNT, RECONNECT_SECONDS, ROOM_MAX_CLIENTS, STAT_MAX, STATS_EVERY_MS } from "../constants.js";
 import { accountFor } from "../auth.js";
 import { verifyAdReward } from "../adReward.js";
-import { queueScores } from "../platformBoards.js";
+import { queueScores, reportScores } from "../platformBoards.js";
+import { Trades } from "../trades.js";
 import { applyAvatar, applyBase, applyEmote, applyLoadout, applyPose } from "../presence.js";
+import { cleanStep, loadTutorial, saveTutorial } from "../tutorial.js";
 
 function sanitizeName(raw: unknown): string {
   return typeof raw === "string" ? raw.slice(0, NAME_MAX) : "";
@@ -47,8 +49,22 @@ export class WorldRoom extends Room<{ state: WorldState }> {
 
   private statsAt = new Map<string, number>(); // sessionId -> last accepted `stats` (server clock)
   private adAt = new Map<string, number>(); // sessionId -> when the next ad reward is allowed
+  private tutorialAt = new Map<string, number>(); // sessionId -> the tutorial step known for it
+  private tutorialOf = new Map<string, string>(); // sessionId -> the account its step was loaded for
+
+  private trades = new Trades({
+    client: (sid) => this.clients.getById(sid),
+    player: (sid) => this.state.players.get(sid),
+    later: (ms, fn) => this.clock.setTimeout(fn, ms),
+  });
 
   messages = {
+    // Trades (trades.ts): the server brokers requests / offers / accepts; the clients swap the cars.
+    tradeRequest: (client: Client, msg: unknown) => this.trades.request(client, msg),
+    tradeReply: (client: Client, msg: unknown) => this.trades.reply(client, msg),
+    tradeOffer: (client: Client, msg: unknown) => this.trades.offer(client, msg),
+    tradeAccept: (client: Client, msg: unknown) => this.trades.accept(client, msg),
+    tradeCancel: (client: Client) => this.trades.cancel(client),
     pose: (client: Client, msg: unknown) => {
       const p = this.state.players.get(client.sessionId);
       if (p) applyPose(p, msg);
@@ -102,6 +118,20 @@ export class WorldRoom extends Room<{ state: WorldState }> {
       this.adAt.set(client.sessionId, now + AD_COOLDOWN_MS);
       client.send("adReward", { ok: true });
     },
+    // { step }: sent once joined (and its handler set), with the step this browser has reached.
+    // Answers `tutorial` { step } for a verified account: where it is, on any browser.
+    tutorialSync: (client: Client, msg: { step?: unknown }) => {
+      const p = this.state.players.get(client.sessionId);
+      if (p) void this.syncTutorial(client, p, msg?.step);
+    },
+    // { step }: the tutorial moved on (game/tutorial.js). Saved for a verified account, only upward.
+    tutorial: (client: Client, msg: { step?: unknown }) => {
+      const p = this.state.players.get(client.sessionId);
+      const step = cleanStep(msg?.step);
+      if (!p || step === null || step <= (this.tutorialAt.get(client.sessionId) ?? -1)) return;
+      this.tutorialAt.set(client.sessionId, step);
+      if (p.uid) void saveTutorial(p.uid, step);
+    },
     // Signed in or out mid-session: a new token (or none) and display name. Re-verified.
     identify: async (client: Client, msg: Who) => {
       const p = this.state.players.get(client.sessionId);
@@ -110,8 +140,10 @@ export class WorldRoom extends Room<{ state: WorldState }> {
       if (typeof msg?.pfp === "string") p.pfp = sanitizePfp(msg.pfp);
       const uid = await accountFor(msg);
       if (this.state.players.get(client.sessionId) !== p) return;
+      const changed = p.uid !== uid;
       p.uid = uid;
       p.signedIn = !!uid;
+      if (changed) await this.syncTutorial(client, p, this.tutorialAt.get(client.sessionId));
     },
   };
 
@@ -147,6 +179,30 @@ export class WorldRoom extends Room<{ state: WorldState }> {
     p.signedIn = !!uid;
   }
 
+  // The tutorial step for this session: the further of what the account has stored and what the
+  // client reports (a guest has only the latter). A step the store lacks is saved; the result goes
+  // back as `tutorial` { step } so a returning player resumes where they were, on any browser. The
+  // store is read once per account per session (`tutorialOf`); a repeat just answers.
+  async syncTutorial(client: Client, p: PlayerState, fromClient: unknown) {
+    const local = cleanStep(fromClient) ?? 0;
+    const sid = client.sessionId;
+    if (p.uid && this.tutorialOf.get(sid) === p.uid) {
+      const step = Math.max(local, this.tutorialAt.get(sid) ?? 0);
+      if (step > (this.tutorialAt.get(sid) ?? -1)) await saveTutorial(p.uid, step);
+      this.tutorialAt.set(sid, step);
+      return client.send("tutorial", { step });
+    }
+    const uid = p.uid;
+    const stored = uid ? await loadTutorial(uid) : null;
+    if (this.state.players.get(sid) !== p || p.uid !== uid) return; // left, or signed in as someone else meanwhile
+    if (uid) this.tutorialOf.set(sid, uid);
+    const step = Math.max(local, stored ?? 0, this.tutorialAt.get(sid) ?? 0);
+    this.tutorialAt.set(sid, step);
+    if (!uid) return; // a guest's progress stays in its browser
+    if (stored === null || step > stored) await saveTutorial(uid, step);
+    client.send("tutorial", { step });
+  }
+
   // A deliberate `room.leave()` closes with CONSENTED: drop the player (and free the garage) at
   // once. Anything else (WiFi blip, backgrounded tab) gets RECONNECT_SECONDS to come back to the
   // same session and garage.
@@ -159,8 +215,17 @@ export class WorldRoom extends Room<{ state: WorldState }> {
         // Not back in time.
       }
     }
+    this.trades.leave(client.sessionId);
     this.state.players.delete(client.sessionId);
     this.statsAt.delete(client.sessionId);
     this.adAt.delete(client.sessionId);
+    this.tutorialAt.delete(client.sessionId);
+    this.tutorialOf.delete(client.sessionId);
+  }
+
+  // The room empties or the pod shuts down (deploy / scale-down SIGTERM): report the queued scores
+  // now instead of losing up to PLATFORM_BOARD_EVERY_MS of them. Never throws.
+  async onDispose() {
+    await reportScores();
   }
 }

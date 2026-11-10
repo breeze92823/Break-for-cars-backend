@@ -20,8 +20,10 @@ export const POSE_BOUNDS = { xyz: 2000, speed: 200 };
 
 // A player's garage as the others see it (presence.ts applyBase; client game.js baseSnapshot):
 // relayed as JSON, never trusted for anything but drawing.
-export const BASE_MAX_LEN = 6000;
-export const BAYS_MAX = 10; // client BASE.slots x 2
+export const BASE_MAX_LEN = 12000;
+// client BASE.slots x 2 per floor x (1 + BASE.floors.length) = 30 today; room for two more floors
+export const BAYS_MAX = 50;
+export const FLOORS_MAX = 4; // extra garage floors (client BASE.floors)
 export const LEVEL_MAX = 1000; // car upgrade level (client GAME.upgrade.maxLevel is 50)
 export const CONVEYOR_LEVEL_MAX = 64; // client CONVEYOR_UPGRADE.levels
 export const MONEY_MAX = 1e33;
@@ -60,6 +62,14 @@ export const ID_PATTERN = /^[A-Za-z0-9_-]{1,32}$/;
 export const NAME_PATTERN = /^[A-Za-z0-9 '.&!_-]{1,32}$/;
 // `emote`: a Bloxity emote id (24-char catalogue ids, kept opaque).
 export const EMOTE_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
+
+// Player-to-player trades (trades.ts; client game/trade.js): hotbar cars only, both sides must accept.
+export const TRADE_SLOTS = 9; // cars per side (the window's 3 x 3 grid); the client's hotbar holds 7
+export const TRADE_REACH_M = 15; // how close two players must be to start a trade (the client asks within ~5 m)
+export const TRADE_INVITE_MS = 15 * 1000; // how long a request waits for an answer
+
+// The new-player tutorial (tutorial.ts; client config.js TUTORIAL.steps): steps 0-4, then done.
+export const TUTORIAL_DONE_STEP = 5;
 
 // Ids the client makes in VITE_DEV_MODE (no SDK). Trusted only off production (a local server).
 export const DEV_ID_PREFIX = "dev-";

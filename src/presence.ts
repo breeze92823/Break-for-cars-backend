@@ -1,4 +1,4 @@
-import { AVATAR_MAX_LEN, BAYS_MAX, BASE_MAX_LEN, CONVEYOR_LEVEL_MAX, EMOTE_PATTERN, ID_PATTERN, LEVEL_MAX, MONEY_MAX, NAME_PATTERN, POSE_BOUNDS } from "./constants.js";
+import { AVATAR_MAX_LEN, BAYS_MAX, BASE_MAX_LEN, CONVEYOR_LEVEL_MAX, EMOTE_PATTERN, FLOORS_MAX, ID_PATTERN, LEVEL_MAX, MONEY_MAX, NAME_PATTERN, POSE_BOUNDS } from "./constants.js";
 import type { PlayerState } from "./rooms/schema/WorldState.js";
 
 // Presence: what the other clients need to draw a player and their garage (client remotePlayers.js,
@@ -67,14 +67,17 @@ function bay(v: unknown): Record<string, unknown> | null {
   return null;
 }
 
-// `base` { lvl, unl, inc, bays }: conveyor upgrade level, bought bays, income ($/s) and what stands
-// in each bay. Stored re-serialised (only the shape above survives); a malformed one is ignored.
+// `base` { lvl, unl, fl, sk, inc, bays }: conveyor upgrade level, bought bays, extra floors bought,
+// garage skin id, income ($/s) and what stands in each bay. Stored re-serialised (only the shape
+// above survives); a malformed one is ignored.
 export function applyBase(p: PlayerState, msg: unknown): void {
   const m = obj(msg);
   if (!m || !Array.isArray(m.bays)) return;
   const out = {
     lvl: Number.isInteger(m.lvl) ? clamp(m.lvl as number, 0, CONVEYOR_LEVEL_MAX) : 0,
     unl: Array.isArray(m.unl) ? [...new Set(m.unl.filter((i): i is number => Number.isInteger(i) && i >= 0 && i < BAYS_MAX))] : [],
+    fl: Number.isInteger(m.fl) ? clamp(m.fl as number, 0, FLOORS_MAX) : 0,
+    sk: isId(m.sk) ? m.sk : "classic",
     inc: finite(m.inc) ? clamp(m.inc, 0, MONEY_MAX) : 0,
     bays: m.bays.slice(0, BAYS_MAX).map(bay),
   };
