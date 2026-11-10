@@ -71,5 +71,10 @@ export const TRADE_INVITE_MS = 15 * 1000; // how long a request waits for an ans
 // The new-player tutorial (tutorial.ts; client config.js TUTORIAL.steps): steps 0-4, then done.
 export const TUTORIAL_DONE_STEP = 5;
 
+// The HUD's free car (freeCar.ts; client config.js FREE_CAR.minutes): play this long (server clock,
+// while connected) to claim it, once per verified account. Play time is saved this often meanwhile.
+export const FREE_CAR_SECONDS = 30 * 60;
+export const FREE_CAR_SAVE_MS = 60 * 1000;
+
 // Ids the client makes in VITE_DEV_MODE (no SDK). Trusted only off production (a local server).
 export const DEV_ID_PREFIX = "dev-";

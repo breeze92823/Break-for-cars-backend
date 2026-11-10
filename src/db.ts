@@ -7,7 +7,9 @@ import { MongoClient, type Collection } from "mongodb";
 // in the browser.
 export interface PlayerDoc {
   _id: string; // the Bloxity user id the server verified (auth.ts), never one a client sent
-  tutorialStep: number; // 0..TUTORIAL_DONE_STEP (constants.ts), only ever raised
+  tutorialStep?: number; // 0..TUTORIAL_DONE_STEP (constants.ts), only ever raised
+  playSeconds?: number; // s of play the server counted (freeCar.ts), only ever raised
+  freeCarClaimed?: boolean; // the HUD's free car was taken (freeCar.ts), once per account
   updatedAt: Date;
 }
 
@@ -18,7 +20,7 @@ let players: Collection<PlayerDoc> | null = null;
 export async function connectDb(): Promise<void> {
   const uri = process.env.MONGODB_URI;
   if (!uri) {
-    console.warn("[db] MONGODB_URI not set: tutorial progress is kept in memory only");
+    console.warn("[db] MONGODB_URI not set: tutorial + free-car progress is kept in memory only");
     return;
   }
   try {
@@ -28,7 +30,7 @@ export async function connectDb(): Promise<void> {
     players = client.db().collection<PlayerDoc>("players");
     console.log("[db] connected to MongoDB");
   } catch (err) {
-    console.warn("[db] connect failed: tutorial progress is kept in memory only", err);
+    console.warn("[db] connect failed: tutorial + free-car progress is kept in memory only", err);
     await client?.close().catch(() => {});
     client = null;
     players = null;

@@ -1,12 +1,13 @@
 import { Room, Client, CloseCode } from "colyseus";
 import { WorldState, PlayerState } from "./schema/WorldState.js";
-import { AD_COOLDOWN_MS, NAME_MAX, PFP_MAX_LEN, PLOT_COUNT, RECONNECT_SECONDS, ROOM_MAX_CLIENTS, STAT_MAX, STATS_EVERY_MS } from "../constants.js";
+import { AD_COOLDOWN_MS, FREE_CAR_SAVE_MS, FREE_CAR_SECONDS, NAME_MAX, PFP_MAX_LEN, PLOT_COUNT, RECONNECT_SECONDS, ROOM_MAX_CLIENTS, STAT_MAX, STATS_EVERY_MS } from "../constants.js";
 import { accountFor } from "../auth.js";
 import { verifyAdReward } from "../adReward.js";
 import { queueScores, reportScores } from "../platformBoards.js";
 import { Trades } from "../trades.js";
 import { applyAvatar, applyBase, applyEmote, applyLoadout, applyPose } from "../presence.js";
 import { cleanStep, loadTutorial, saveTutorial } from "../tutorial.js";
+import { cleanSeconds, loadFreeCar, markClaimed, savePlayed } from "../freeCar.js";
 
 function sanitizeName(raw: unknown): string {
   return typeof raw === "string" ? raw.slice(0, NAME_MAX) : "";
@@ -51,6 +52,10 @@ export class WorldRoom extends Room<{ state: WorldState }> {
   private adAt = new Map<string, number>(); // sessionId -> when the next ad reward is allowed
   private tutorialAt = new Map<string, number>(); // sessionId -> the tutorial step known for it
   private tutorialOf = new Map<string, string>(); // sessionId -> the account its step was loaded for
+  // The free car (freeCar.ts): sessionId -> the verified account's play clock (`base` s stored when
+  // loaded, counted on from `from`, server ms) and whether it was claimed. Guests have none.
+  private playOf = new Map<string, { uid: string; base: number; from: number; claimed: boolean }>();
+  private freeLocal = new Map<string, unknown>(); // sessionId -> the client's last freeCarSync (its browser's own count)
 
   private trades = new Trades({
     client: (sid) => this.clients.getById(sid),
@@ -132,6 +137,31 @@ export class WorldRoom extends Room<{ state: WorldState }> {
       this.tutorialAt.set(client.sessionId, step);
       if (p.uid) void saveTutorial(p.uid, step);
     },
+    // { played, claimed }: sent once joined, with this browser's own count (seeds a new account).
+    // Answers `freeCar` { tracked, played?, claimed?, need? }: for a verified account the server's
+    // count (it keeps counting while connected); tracked false = a guest, the browser keeps its own.
+    freeCarSync: (client: Client, msg: unknown) => {
+      const p = this.state.players.get(client.sessionId);
+      if (!p) return;
+      this.freeLocal.set(client.sessionId, msg);
+      void this.syncFreeCar(client, p);
+    },
+    // The HUD's free car: answers `freeCarClaim` { ok, reason?: "guest" | "early" | "claimed", played? }.
+    // ok only once per account, after FREE_CAR_SECONDS of play on the server clock.
+    freeCarClaim: async (client: Client) => {
+      const sid = client.sessionId;
+      const p = this.state.players.get(sid);
+      const rec = this.playOf.get(sid);
+      if (!p) return;
+      if (!p.uid || !rec || rec.uid !== p.uid) return client.send("freeCarClaim", { ok: false, reason: "guest" });
+      const played = this.playedOf(sid);
+      if (rec.claimed) return client.send("freeCarClaim", { ok: false, reason: "claimed" });
+      if (played < FREE_CAR_SECONDS) return client.send("freeCarClaim", { ok: false, reason: "early", played });
+      rec.claimed = true; // before the await: a double click claims once
+      const ok = await markClaimed(rec.uid, played);
+      if (!this.state.players.has(sid)) return;
+      client.send("freeCarClaim", ok ? { ok: true } : { ok: false, reason: "claimed" });
+    },
     // Signed in or out mid-session: a new token (or none) and display name. Re-verified.
     identify: async (client: Client, msg: Who) => {
       const p = this.state.players.get(client.sessionId);
@@ -143,13 +173,60 @@ export class WorldRoom extends Room<{ state: WorldState }> {
       const changed = p.uid !== uid;
       p.uid = uid;
       p.signedIn = !!uid;
-      if (changed) await this.syncTutorial(client, p, this.tutorialAt.get(client.sessionId));
+      if (changed) {
+        void this.syncFreeCar(client, p);
+        await this.syncTutorial(client, p, this.tutorialAt.get(client.sessionId));
+      }
     },
   };
 
   onCreate() {
     // Shown with the room in the game page's Open Rooms list.
     void this.setMetadata({ mode: "garages", modeName: "Break for Cars" });
+    // The free car's play clocks are saved now and then, not only on leave (a crash loses at most this).
+    this.clock.setInterval(() => this.savePlayClocks(), FREE_CAR_SAVE_MS);
+  }
+
+  // s of play for the account this session tracks (0 when none).
+  playedOf(sid: string): number {
+    const rec = this.playOf.get(sid);
+    return rec ? rec.base + Math.floor((Date.now() - rec.from) / 1000) : 0;
+  }
+
+  async savePlayClocks() {
+    await Promise.all([...this.playOf.entries()].map(([sid, rec]) => savePlayed(rec.uid, this.playedOf(sid))));
+  }
+
+  // Starts (or restarts, after a sign-in as someone else) the free car's play clock for this session's
+  // verified account and tells the client where it stands. A new account (no record) starts from what
+  // this browser counted; a known one from what it has stored. A guest gets { tracked: false }.
+  async syncFreeCar(client: Client, p: PlayerState): Promise<void> {
+    const sid = client.sessionId;
+    const prev = this.playOf.get(sid);
+    if (prev && prev.uid !== p.uid) {
+      this.playOf.delete(sid);
+      await savePlayed(prev.uid, prev.base + Math.floor((Date.now() - prev.from) / 1000));
+    }
+    const uid = p.uid;
+    if (!uid) return client.send("freeCar", { tracked: false });
+    const known = this.playOf.get(sid);
+    if (!known) {
+      const stored = await loadFreeCar(uid);
+      if (this.state.players.get(sid) !== p || p.uid !== uid) return; // left, or signed in as someone else meanwhile
+      if (this.playOf.has(sid)) return this.syncFreeCar(client, p); // a parallel sync got there first
+      const local = (this.freeLocal.get(sid) ?? {}) as { played?: unknown; claimed?: unknown };
+      const rec = stored
+        ? { uid, base: stored.played, from: Date.now(), claimed: stored.claimed }
+        : { uid, base: cleanSeconds(local.played) ?? 0, from: Date.now(), claimed: local.claimed === true };
+      this.playOf.set(sid, rec);
+      if (!stored) {
+        if (rec.claimed) await markClaimed(uid, rec.base);
+        else await savePlayed(uid, rec.base);
+      }
+    }
+    const rec = this.playOf.get(sid);
+    if (!rec || this.state.players.get(sid) !== p) return;
+    client.send("freeCar", { tracked: true, played: this.playedOf(sid), claimed: rec.claimed, need: FREE_CAR_SECONDS });
   }
 
   // The garage `want` when nobody in this room holds it, else the lowest free one (-1 only if every
@@ -221,11 +298,18 @@ export class WorldRoom extends Room<{ state: WorldState }> {
     this.adAt.delete(client.sessionId);
     this.tutorialAt.delete(client.sessionId);
     this.tutorialOf.delete(client.sessionId);
+    this.freeLocal.delete(client.sessionId);
+    const rec = this.playOf.get(client.sessionId);
+    if (rec) {
+      const played = this.playedOf(client.sessionId);
+      this.playOf.delete(client.sessionId);
+      await savePlayed(rec.uid, played);
+    }
   }
 
   // The room empties or the pod shuts down (deploy / scale-down SIGTERM): report the queued scores
   // now instead of losing up to PLATFORM_BOARD_EVERY_MS of them. Never throws.
   async onDispose() {
-    await reportScores();
+    await Promise.all([reportScores(), this.savePlayClocks()]);
   }
 }
