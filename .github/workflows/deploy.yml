@@ -11,7 +11,7 @@ env:
   REGISTRY: ghcr.io
   # Repo variable, set under Settings -> Secrets and variables -> Actions -> Variables.
   # Must match the lowercase game ID created on the Bloxity "My Games" dashboard
-  # (the client's GAME_SLUG in src/config.js: bowling-roll).
+  # (the client's GAME_SLUG in src/config.js: break-for-cars).
   GAME_ID: ${{ vars.LEGION_GAME_ID || secrets.LEGION_GAME_ID }}
 
 jobs:

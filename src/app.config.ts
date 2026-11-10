@@ -5,11 +5,11 @@ import { WorldRoom } from "./rooms/WorldRoom.js";
 import { MAX_PAYLOAD_BYTES } from "./constants.js";
 
 const server = defineServer({
-  // saveProgress carries the owned boats/engines/trails/pets, over the default 4 KB message cap.
+  // `base` (a whole garage) and the join options can pass the default 4 KB message cap.
   transport: new WebSocketTransport({ maxPayload: MAX_PAYLOAD_BYTES }),
 
   rooms: {
-    // The client calls joinOrCreate("world", ...). Progress is shared across rooms via Mongo.
+    // The client calls joinOrCreate("world", ...) through the Bloxity matchmaker (client net.js).
     world: defineRoom(WorldRoom),
   },
 

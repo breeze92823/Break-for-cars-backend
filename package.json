@@ -1,6 +1,6 @@
 {
   "private": true,
-  "name": "bowling-roll-server",
+  "name": "break-for-cars-server",
   "version": "0.1.0",
   "description": "Colyseus server for Bowling Roll: progress saving and the room roster",
   "type": "module",

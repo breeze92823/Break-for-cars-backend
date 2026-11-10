@@ -1,71 +1,65 @@
-// Keep in step with the client's src/config.js by hand.
-export const ROOM_MAX_CLIENTS = 50;
+// Keep in step with the client's src/config.js (NET, LEADERBOARDS, PICKAXES, BLOCK_THEMES, CARS) by hand.
+
+// The game slug registered on bloxity.io (the client's GAME_SLUG). Bloxity hosting also injects it
+// as BLOXITY_GAME_ID; that wins when set.
+export const GAME_SLUG = "break-for-cars";
+
+// Players per room. Every player owns one of the room's PLOT_COUNT garages, so the two are equal.
+// The deploy workflow sends this as Legion's `roomSize` (keep it 2-100 for Bloxity party play).
+export const ROOM_MAX_CLIENTS = 6;
+export const PLOT_COUNT = 6;
 
 // Longest accepted strings.
 export const NAME_MAX = 64;
 // Profile picture URL (Bloxity `pfp`), relayed so other players can draw it.
 export const PFP_MAX_LEN = 512;
-// Presence (presence.ts): the Bloxity avatar JSON relayed for the others to draw, the most pets
-// drawn per player, and the pose bounds (|x|, |y| and z up to `xy` m; z down to -`z` m: a race's
-// track runs far down -Z; speed in m/s).
+// Presence (presence.ts): the Bloxity avatar JSON relayed for the others to draw, and pose bounds
+// (|x|, |y|, |z| in m; speed in m/s). The island is ~260 x 400 m.
 export const AVATAR_MAX_LEN = 3000;
-export const PRESENCE_PETS_MAX = 8;
-export const POSE_BOUNDS = { xy: 5000, z: 1e8, speed: 2000 };
+export const POSE_BOUNDS = { xyz: 2000, speed: 200 };
+
+// A player's garage as the others see it (presence.ts applyBase; client game.js baseSnapshot):
+// relayed as JSON, never trusted for anything but drawing.
+export const BASE_MAX_LEN = 6000;
+export const BAYS_MAX = 10; // client BASE.slots x 2
+export const LEVEL_MAX = 1000; // car upgrade level (client GAME.upgrade.maxLevel is 50)
+export const CONVEYOR_LEVEL_MAX = 64; // client CONVEYOR_UPGRADE.levels
+export const MONEY_MAX = 1e33;
 
 // Colyseus drops the whole connection for a WebSocket message above this (default 4 KB).
-export const MAX_PAYLOAD_BYTES = 128 * 1024;
+export const MAX_PAYLOAD_BYTES = 64 * 1024;
 
-// How long a dropped connection (WiFi blip, backgrounded tab) may reconnect with the same session.
+// How long a dropped connection (WiFi blip, backgrounded tab) may reconnect with the same session
+// (it keeps its garage meanwhile).
 export const RECONNECT_SECONDS = 20;
 
-// Upper bounds for saved values, so a forged payload cannot store a bogus number. Generous
-// ceilings, not game rules: the dearest engine costs ~3.6e28 Wins (client ENGINE gems).
-export const CURRENCY_MAX = 1e33; // trophies (Wins), gems, lightning (energy)
-export const REBIRTHS_MAX = 1e9;
-export const DISTANCE_MAX = 1e15; // personal best race distance, studs
-export const PLAY_SECONDS_MAX = 31_536_000; // ~1 year
-
-// Owned catalog ids (client BOATS.list ~20, ENGINE ~34, PARTNER ~20, TRAILS ~29), with slack.
-export const OWNED_MAX = 256;
-// Pets (client PETS): at most PETS_MAX owned, PET_TIERS_MAX craft tiers, slots / storage the
-// counters can grow to.
-export const PETS_MAX = 1000;
-export const PET_TIERS_MAX = 16;
-export const PET_SLOTS_MAX = 50;
-// Online Gifts (client GIFTS.list, 12 of them): claimed indexes and potion counts.
-export const GIFTS_MAX = 64;
-export const POTION_KINDS_MAX = 32;
-export const POTION_COUNT_MAX = 1e9;
-// Daily Reward (client DAILY.days): days in one calendar cycle.
-export const DAILY_DAYS = 7;
-
-// Spin wheel (client SPIN in config.js; spin.ts): one free spin every SPIN_EVERY_MS, stored up
-// to SPIN_CAP; a new player starts with SPIN_START. SPINS_MAX bounds a saved count.
-export const SPIN_EVERY_MS = 15 * 60 * 1000;
-export const SPIN_CAP = 5;
-export const SPIN_START = 1;
-export const SPINS_MAX = 1e6;
-// The wedges' prizes and odds (weights in %). Ids match the client's SPIN.wedges; the client
-// decides what each prize is, the server only which one is won.
-export const SPIN_WEDGES = [
-  { id: "doubleWins", weight: 35 },
-  { id: "wins50", weight: 25 },
-  { id: "luck", weight: 35 },
-  { id: "wins250", weight: 4.9 },
-  { id: "hugePet", weight: 0.1 },
+// Bloxity's own boards (platformBoards.ts; the client's LEADERBOARDS in config.js declares the same
+// ones): how often queued scores are reported and the most in one call.
+export const PLATFORM_BOARD_EVERY_MS = 30 * 1000;
+export const PLATFORM_BOARD_BATCH = 200;
+export const PLATFORM_BOARDS = [
+  { id: "cash", label: "Most Cash", order: "desc", mode: "latest", format: "compact", reset: "none" },
+  { id: "income", label: "Total Income /s", order: "desc", mode: "best", format: "compact", reset: "none" },
+  { id: "playtime", label: "Play Time (min)", order: "desc", mode: "latest", format: "number", reset: "none" },
 ] as const;
+export type BoardId = (typeof PLATFORM_BOARDS)[number]["id"];
+// The most a `stats` message may claim (cash and income are the game's money; playtime minutes).
+export const STAT_MAX = 1e30;
+// How often a session's `stats` are accepted (the client sends them every NET.statsEvery s).
+export const STATS_EVERY_MS = 10 * 1000;
 
-// Leaderboards (leaderboard.ts; client plaza.js boards): the saved doc fields ranked (Rebirth,
-// Wins, Power, Playtime), rows per board and how often the lists are re-read and re-sent.
-export const LEADERBOARD_STATS = ["rebirths", "trophies", "energy", "playtime"] as const;
-export type LeaderboardStat = (typeof LEADERBOARD_STATS)[number];
-export const LEADERBOARD_SIZE = 10;
-export const LEADERBOARD_EVERY_MS = 60 * 1000;
+// Rewarded ads (adReward.ts; client spin.js "Watch an ad"): a token is checked with Bloxity before the
+// client adds the spin, at most once per AD_COOLDOWN_MS per session (server clock).
+export const AD_TOKEN_MAX_LEN = 4096;
+export const AD_COOLDOWN_MS = 3 * 60 * 1000;
 
-// Ids from the client's catalogs (boats, engines incl. `ladder-N`, partners, trails, pet kinds,
-// potions): camelCase slugs, so nothing odd is stored.
+// Catalog ids from the client's config.js (pickaxe ids, block themes, car looks, rarities, variants):
+// plain slugs.
 export const ID_PATTERN = /^[A-Za-z0-9_-]{1,32}$/;
+// Car names from the client's CAR_ROSTER / DAILY / SPIN_WHEEL ("Solar GT").
+export const NAME_PATTERN = /^[A-Za-z0-9 '.&!_-]{1,32}$/;
+// `emote`: a Bloxity emote id (24-char catalogue ids, kept opaque).
+export const EMOTE_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
-// The client's per-browser fallback id for players who are not signed in to Bloxity.
-// Guests are never persisted.
-export const GUEST_ID_PREFIX = "guest-";
+// Ids the client makes in VITE_DEV_MODE (no SDK). Trusted only off production (a local server).
+export const DEV_ID_PREFIX = "dev-";
