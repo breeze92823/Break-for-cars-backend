@@ -71,6 +71,9 @@ export const TRADE_INVITE_MS = 15 * 1000; // how long a request waits for an ans
 // The new-player tutorial (tutorial.ts; client config.js TUTORIAL.steps): steps 0-4, then done.
 export const TUTORIAL_DONE_STEP = 5;
 
+// The "New Update!" window (news.ts; client config.js NEWS.version): versions are small integers.
+export const NEWS_VERSION_MAX = 100000;
+
 // The HUD's free car (freeCar.ts; client config.js FREE_CAR.minutes): play this long (server clock,
 // while connected) to claim it, once per verified account. Play time is saved this often meanwhile.
 export const FREE_CAR_SECONDS = 30 * 60;

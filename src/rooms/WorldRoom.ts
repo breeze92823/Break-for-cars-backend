@@ -8,6 +8,7 @@ import { Trades } from "../trades.js";
 import { applyAvatar, applyBase, applyEmote, applyLoadout, applyPose } from "../presence.js";
 import { cleanStep, loadTutorial, saveTutorial } from "../tutorial.js";
 import { cleanSeconds, loadFreeCar, markClaimed, savePlayed } from "../freeCar.js";
+import { cleanVersion, loadNews, saveNews } from "../news.js";
 
 function sanitizeName(raw: unknown): string {
   return typeof raw === "string" ? raw.slice(0, NAME_MAX) : "";
@@ -56,6 +57,7 @@ export class WorldRoom extends Room<{ state: WorldState }> {
   // loaded, counted on from `from`, server ms) and whether it was claimed. Guests have none.
   private playOf = new Map<string, { uid: string; base: number; from: number; claimed: boolean }>();
   private freeLocal = new Map<string, unknown>(); // sessionId -> the client's last freeCarSync (its browser's own count)
+  private newsLocal = new Map<string, number>(); // sessionId -> the "New Update!" version its browser reported seen
 
   private trades = new Trades({
     client: (sid) => this.clients.getById(sid),
@@ -137,6 +139,23 @@ export class WorldRoom extends Room<{ state: WorldState }> {
       this.tutorialAt.set(client.sessionId, step);
       if (p.uid) void saveTutorial(p.uid, step);
     },
+    // { seen }: sent once joined, with the newest "New Update!" version this browser has shown.
+    // Answers `news` { tracked: true, seen } for a verified account (the further of stored and
+    // reported, saved), or { tracked: false } for a guest (its browser decides alone).
+    newsSync: (client: Client, msg: { seen?: unknown }) => {
+      const p = this.state.players.get(client.sessionId);
+      if (!p) return;
+      this.newsLocal.set(client.sessionId, cleanVersion(msg?.seen) ?? 0);
+      void this.syncNews(client, p);
+    },
+    // { version }: the player closed the "New Update!" window. Saved for a verified account, only upward.
+    newsSeen: (client: Client, msg: { version?: unknown }) => {
+      const p = this.state.players.get(client.sessionId);
+      const version = cleanVersion(msg?.version);
+      if (!p || version === null) return;
+      this.newsLocal.set(client.sessionId, Math.max(version, this.newsLocal.get(client.sessionId) ?? 0));
+      if (p.uid) void saveNews(p.uid, version);
+    },
     // { played, claimed }: sent once joined, with this browser's own count (seeds a new account).
     // Answers `freeCar` { tracked, played?, claimed?, need? }: for a verified account the server's
     // count (it keeps counting while connected); tracked false = a guest, the browser keeps its own.
@@ -175,6 +194,7 @@ export class WorldRoom extends Room<{ state: WorldState }> {
       p.signedIn = !!uid;
       if (changed) {
         void this.syncFreeCar(client, p);
+        if (this.newsLocal.has(client.sessionId)) void this.syncNews(client, p);
         await this.syncTutorial(client, p, this.tutorialAt.get(client.sessionId));
       }
     },
@@ -227,6 +247,20 @@ export class WorldRoom extends Room<{ state: WorldState }> {
     const rec = this.playOf.get(sid);
     if (!rec || this.state.players.get(sid) !== p) return;
     client.send("freeCar", { tracked: true, played: this.playedOf(sid), claimed: rec.claimed, need: FREE_CAR_SECONDS });
+  }
+
+  // The "New Update!" version this session's player has seen: for a verified account the further of
+  // what it has stored and what the browser reported (a newer local one is saved), so the window shows
+  // once per update per account on any device. A guest gets { tracked: false }: its browser decides.
+  async syncNews(client: Client, p: PlayerState): Promise<void> {
+    const sid = client.sessionId;
+    const uid = p.uid;
+    if (!uid) return client.send("news", { tracked: false });
+    const stored = await loadNews(uid);
+    if (this.state.players.get(sid) !== p || p.uid !== uid) return; // left, or signed in as someone else meanwhile
+    const seen = Math.max(this.newsLocal.get(sid) ?? 0, stored ?? 0);
+    if (stored === null || seen > stored) await saveNews(uid, seen);
+    client.send("news", { tracked: true, seen });
   }
 
   // The garage `want` when nobody in this room holds it, else the lowest free one (-1 only if every
@@ -299,6 +333,7 @@ export class WorldRoom extends Room<{ state: WorldState }> {
     this.tutorialAt.delete(client.sessionId);
     this.tutorialOf.delete(client.sessionId);
     this.freeLocal.delete(client.sessionId);
+    this.newsLocal.delete(client.sessionId);
     const rec = this.playOf.get(client.sessionId);
     if (rec) {
       const played = this.playedOf(client.sessionId);

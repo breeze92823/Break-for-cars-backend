@@ -10,6 +10,7 @@ export interface PlayerDoc {
   tutorialStep?: number; // 0..TUTORIAL_DONE_STEP (constants.ts), only ever raised
   playSeconds?: number; // s of play the server counted (freeCar.ts), only ever raised
   freeCarClaimed?: boolean; // the HUD's free car was taken (freeCar.ts), once per account
+  newsSeen?: number; // the newest "New Update!" window version shown (news.ts), only ever raised
   updatedAt: Date;
 }
 
